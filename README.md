@@ -44,3 +44,4 @@ Configure the Pabbly webhook to point at
 `https://<host>/api/v1/webhooks/pabbly/<PABBLY_WEBHOOK_SECRET>` for Successful
 Payment, Payment Failure and Payment Refund.
 # coupon-course-onboard-workflow
+# coupon-course-onboard-workflow
