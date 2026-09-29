@@ -41,7 +41,8 @@ sed -i 's/host    all             all             127.0.0.1\/32            ident
 sed -i 's/host    all             all             ::1\/128                 ident/host    all             all             ::1\/128                 scram-sha-256/' /var/lib/pgsql/data/pg_hba.conf || true
 
 # Memory tuning for 1GB RAM: keep Postgres lean
-cat << 'EOF' > /var/lib/pgsql/data/conf.d/memory.conf 2>/dev/null || cat << 'EOF' >> /var/lib/pgsql/data/postgresql.conf
+mkdir -p /var/lib/pgsql/data/conf.d
+cat << 'EOF' > /var/lib/pgsql/data/conf.d/memory.conf
 # Memory optimizations for 1GB RAM
 shared_buffers = 64MB
 work_mem = 4MB
@@ -49,7 +50,16 @@ maintenance_work_mem = 16MB
 max_connections = 30
 EOF
 
+if ! grep -q "include_dir = 'conf.d'" /var/lib/pgsql/data/postgresql.conf; then
+    echo "include_dir = 'conf.d'" >> /var/lib/pgsql/data/postgresql.conf
+fi
+
 systemctl enable --now postgresql
+
+# Wait for postgres to be ready
+until sudo -u postgres pg_isready -q 2>/dev/null; do
+    sleep 1
+done
 
 # Create database and user if not existing
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='postgres'" | grep -q 1 || \
@@ -60,7 +70,8 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='marketplace'
 echo "✓ PostgreSQL ready on localhost:5432."
 
 echo "===> [4/6] Configuring Nginx with sslip.io..."
-DROPLET_IP=$(curl -s -4 ifconfig.me || hostname -I | awk '{print $1}')
+DROPLET_IP=$(curl -s -4 https://ifconfig.me || curl -s -4 https://api.ipify.org || hostname -I | awk '{print $1}')
+DROPLET_IP=$(echo "${DROPLET_IP}" | tr -d '[:space:]')
 DOMAIN="${DROPLET_IP}.sslip.io"
 
 echo "Detected domain: ${DOMAIN}"
