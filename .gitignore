@@ -27,3 +27,5 @@ coverage.txt
 
 .env
 .env.local
+bin/
+logs/

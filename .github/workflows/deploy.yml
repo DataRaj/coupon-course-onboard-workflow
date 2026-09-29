@@ -1,0 +1,36 @@
+name: Deploy to DigitalOcean Droplet
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          passphrase: ${{ secrets.DROPLET_SSH_PASSPHRASE }} # optional if key is password-protected
+          script: |
+            set -e
+            APP_DIR="/opt/course-coupon-service"
+
+            echo "Navigating to $APP_DIR..."
+            cd $APP_DIR
+
+            echo "Pulling latest changes from main..."
+            git pull origin main
+
+            echo "Building and restarting containers with Docker Compose..."
+            docker compose up -d --build
+
+            echo "Cleaning unused dangling images..."
+            docker image prune -f
+
+            echo "Deployment successfully completed!"
