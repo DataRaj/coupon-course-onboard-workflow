@@ -11,10 +11,13 @@ import (
 // Course is the local projection of one provider Product+Plan pair. It is a read
 // model: the provider stays the source of truth for price and availability.
 type Course struct {
-	ID                uuid.UUID
-	Provider          string
-	ProviderProductID string
-	ProviderPlanID    string
+	Catalog              *CatalogDetails
+	CommercialObservedAt *time.Time
+	CommercialStatus     string
+	ID                   uuid.UUID
+	Provider             string
+	ProviderProductID    string
+	ProviderPlanID       string
 
 	Title       string
 	PlanName    string

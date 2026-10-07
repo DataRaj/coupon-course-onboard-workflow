@@ -1,0 +1,435 @@
+package pw
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
+	"time"
+
+	"course-coupon/internal/course"
+)
+
+const maxPayloadBytes = 4 << 20
+
+type Payload struct {
+	Body   []byte
+	Source string
+}
+
+// DOMState contains only selected public semantic sections, never the whole page.
+type DOMState struct {
+	Title         string   `json:"title"`
+	BasePlan      string   `json:"base_plan"`
+	PurchaseCard  string   `json:"purchase_card"`
+	OriginalPrice string   `json:"original_price"`
+	About         string   `json:"about"`
+	Teachers      []string `json:"teachers"`
+}
+
+type object map[string]any
+
+func text(v any) string {
+	switch x := v.(type) {
+	case string:
+		if strings.HasPrefix(x, "$") {
+			return ""
+		}
+		return strings.TrimSpace(x)
+	case json.Number:
+		return x.String()
+	}
+	return ""
+}
+func obj(v any) object {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return nil
+}
+func array(v any) []any { a, _ := v.([]any); return a }
+func decodeJSON(b []byte) (any, error) {
+	if len(b) > maxPayloadBytes {
+		return nil, fmt.Errorf("payload exceeds limit")
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return nil, fmt.Errorf("trailing JSON data")
+	}
+	return v, nil
+}
+
+// flightObjects reads public React flight records without executing page scripts.
+// Text records use byte lengths and may contain newlines; skip them correctly.
+// Only JSON records are considered, and only a matched batch object is extracted.
+func flightObjects(raw string) []any {
+	if len(raw) > maxPayloadBytes {
+		return nil
+	}
+	var result []any
+	for len(raw) > 0 {
+		raw = strings.TrimLeft(raw, "\r\n")
+		colon := strings.IndexByte(raw, ':')
+		if colon < 1 {
+			break
+		}
+		if _, err := strconv.ParseUint(raw[:colon], 16, 64); err != nil {
+			break
+		}
+		raw = raw[colon+1:]
+		if strings.HasPrefix(raw, "T") {
+			comma := strings.IndexByte(raw, ',')
+			if comma < 2 {
+				break
+			}
+			n, err := strconv.ParseUint(raw[1:comma], 16, 32)
+			if err != nil || int(n) > len(raw)-comma-1 {
+				break
+			}
+			raw = raw[comma+1+int(n):]
+			continue
+		}
+		line, rest, ok := strings.Cut(raw, "\n")
+		if !ok {
+			rest = ""
+		}
+		if v, err := decodeJSON([]byte(line)); err == nil {
+			result = append(result, v)
+		}
+		raw = rest
+	}
+	return result
+}
+
+// findBatch never accepts a price from an unrelated recommendation or variant.
+func findBatch(v any, slug string, depth int) (object, []any) {
+	if depth > 32 {
+		return nil, nil
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		if text(x["slug"]) == slug && text(x["_id"]) != "" && text(x["name"]) != "" {
+			return x, nil
+		}
+		// The public detail component carries description + sibling batchPlans.
+		if d := obj(x["description"]); d != nil && text(d["slug"]) == slug && text(d["_id"]) != "" {
+			return d, array(x["batchPlans"])
+		}
+		for _, child := range x {
+			if b, plans := findBatch(child, slug, depth+1); b != nil {
+				return b, plans
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if b, plans := findBatch(child, slug, depth+1); b != nil {
+				return b, plans
+			}
+		}
+	}
+	return nil, nil
+}
+
+func Extract(canonical string, acquired time.Time, network []Payload, embedded []string, flight string, dom DOMState) (PWBatchDTO, error) {
+	slug, canonical, err := targetIdentity(canonical)
+	if err != nil {
+		return PWBatchDTO{}, err
+	}
+	d := PWBatchDTO{Provider: Provider, Slug: slug, CanonicalURL: canonical, AcquiredAt: acquired, Provenance: map[string]string{}, Availability: "unknown"}
+	var batch object
+	var plans []any
+	source := ""
+	for _, p := range network {
+		if v, e := decodeJSON(p.Body); e == nil {
+			batch, plans = findBatch(v, slug, 0)
+			if batch != nil {
+				source = "network_json"
+				break
+			}
+		}
+	}
+	if batch == nil {
+		for _, raw := range embedded {
+			if v, e := decodeJSON([]byte(raw)); e == nil {
+				batch, plans = findBatch(v, slug, 0)
+				if batch != nil {
+					source = "embedded_state"
+					break
+				}
+			}
+		}
+	}
+	if batch == nil {
+		for _, v := range flightObjects(flight) {
+			batch, plans = findBatch(v, slug, 0)
+			if batch != nil {
+				source = "embedded_state"
+				break
+			}
+		}
+	}
+	if batch != nil {
+		extractBatch(&d, batch, plans, source)
+	}
+	applyDOM(&d, dom)
+	if d.Title == "" {
+		return d, failure("identity_missing", fmt.Errorf("batch title not found in structured or rendered state"))
+	}
+	if dom.Title != "" && d.Title != strings.TrimSpace(dom.Title) {
+		return d, failure("identity_mismatch", fmt.Errorf("structured and rendered batch titles differ"))
+	}
+	// Category/class from the validated canonical hierarchy, not title guessing.
+	if d.Class == nil {
+		v := int32(12)
+		d.Class = &v
+		d.Provenance["class"] = "canonical_path"
+	}
+	if d.TargetExam == "" {
+		d.TargetExam = "IIT-JEE"
+		d.Provenance["target_exam"] = "canonical_path"
+	}
+	return d, nil
+}
+
+func extractBatch(d *PWBatchDTO, b object, plans []any, source string) {
+	set := func(key string, dest *string, value string) {
+		if value != "" {
+			*dest = value
+			d.Provenance[key] = source
+		}
+	}
+	set("external_id", &d.ExternalID, text(b["_id"]))
+	set("title", &d.Title, text(b["name"]))
+	set("language", &d.Language, text(b["language"]))
+	set("mode", &d.Mode, text(b["mode"]))
+	if v, e := strconv.ParseInt(text(b["class"]), 10, 32); e == nil {
+		c := int32(v)
+		d.Class = &c
+		d.Provenance["class"] = source
+	}
+	if y, e := strconv.Atoi(text(b["examYear"])); e == nil && y >= 2000 && y <= 2200 {
+		d.TargetYear = &y
+		d.Provenance["target_year"] = source
+	}
+	for _, e := range array(b["exam"]) {
+		if text(e) == "IIT-JEE" {
+			set("target_exam", &d.TargetExam, "IIT-JEE")
+		}
+	}
+	for _, date := range []struct {
+		key  string
+		dest **time.Time
+	}{{"startDate", &d.StartDate}, {"endDate", &d.EndDate}} {
+		raw := text(b[date.key])
+		if raw != "" {
+			*date.dest = parseDate(raw)
+			if *date.dest == nil {
+				d.Warnings = append(d.Warnings, date.key+"_invalid")
+			} else {
+				d.Provenance[date.key] = source
+			}
+		}
+	}
+	if text(b["status"]) == "Active" {
+		set("availability", &d.Availability, "available")
+	}
+	if image := obj(b["previewImage"]); image != nil {
+		base := text(image["baseUrl"])
+		if base == "https://static.pw.live/" {
+			set("thumbnail", &d.Thumbnail, base+text(image["key"]))
+		}
+	}
+	fee := obj(b["fee"])
+	// fee.total is the full base-plan selling amount, not iOS purchase pricing.
+	if fee != nil && text(b["priceLabel"]) == "(For Full Batch)" && text(fee["name"]) == "Batch" {
+		set("selling_price", &d.SellingPrice, text(fee["total"]))
+		if d.SellingPrice != "" {
+			d.SellingPriceContext = "selling_price"
+		}
+		if text(fee["currency"]) == "INR" {
+			set("currency", &d.Currency, "INR")
+		}
+	}
+	for _, sub := range array(b["subjects"]) {
+		s := obj(sub)
+		if s == nil {
+			continue
+		}
+		resources, _ := s["isResources"].(bool)
+		subject := text(s["subject"])
+		if resources || subject == "" || subject == "Notices" {
+			continue
+		}
+		d.Subjects = append(d.Subjects, subject)
+		for _, teacher := range array(s["teacherIds"]) {
+			t := obj(teacher)
+			if t == nil {
+				continue
+			}
+			name := strings.TrimSpace(text(t["firstName"]) + " " + text(t["lastName"]))
+			if name != "" {
+				d.Faculty = append(d.Faculty, course.Faculty{Name: name, Subject: subject})
+			}
+		}
+	}
+	if len(d.Subjects) > 0 {
+		d.Provenance["subjects"] = source
+	}
+	if len(d.Faculty) > 0 {
+		d.Provenance["faculty"] = source
+	}
+	for _, plan := range plans {
+		p := obj(plan)
+		if text(p["title"]) != "Batch" {
+			continue
+		}
+		for _, item := range array(p["tableItems"]) {
+			i := obj(item)
+			enabled, _ := i["enabled"].(bool)
+			if enabled && text(i["item"]) != "" {
+				d.Features = append(d.Features, text(i["item"]))
+			}
+		}
+	}
+	if len(d.Features) > 0 {
+		d.Provenance["features"] = source
+	}
+}
+
+func lines(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+func basePrice(s string) string {
+	ls := lines(s)
+	// This section is scoped to #features and its exact base-plan label.
+	for i, l := range ls {
+		if l == "Batch" && i+1 < len(ls) && strings.HasPrefix(ls[i+1], "₹") {
+			return ls[i+1]
+		}
+	}
+	return ""
+}
+func applyDOM(d *PWBatchDTO, dom DOMState) {
+	if d.Description == "" && strings.TrimSpace(dom.About) != "" {
+		description := []rune(strings.TrimSpace(dom.About))
+		if len(description) > 1000 {
+			description = description[:1000]
+		}
+		d.Description = string(description)
+		d.Provenance["description"] = "rendered_dom"
+	}
+
+	set := func(key string, dest *string, v string) {
+		if *dest == "" && v != "" {
+			*dest = v
+			d.Provenance[key] = "rendered_dom"
+		}
+	}
+	set("title", &d.Title, strings.TrimSpace(dom.Title))
+	display := basePrice(dom.BasePlan)
+	if display != "" {
+		if _, e := ParsePrice(display); e == nil {
+			set("currency", &d.Currency, "INR")
+			set("selling_price", &d.SellingPrice, display)
+			d.SellingPriceContext = "selling_price"
+			if a, e := ParsePrice(d.SellingPrice); e == nil {
+				b, _ := ParsePrice(display)
+				if a != b {
+					// PW renders whole rupees but its state may contain paise. Preserve the
+					// precise amount only when the discrepancy is less than one rupee.
+					diff := a - b
+					if diff < 0 {
+						diff = -diff
+					}
+					if diff >= 100 {
+						d.SellingPrice = ""
+						d.SellingPriceContext = ""
+						d.Warnings = append(d.Warnings, "selling_price_conflict: structured and base-plan DOM disagree")
+					} else {
+						d.Warnings = append(d.Warnings, "selling_price_display_rounded: retaining structured paise")
+					}
+				}
+			}
+		}
+	}
+	if dom.OriginalPrice != "" {
+		set("original_price", &d.OriginalPrice, dom.OriginalPrice)
+	}
+	for _, l := range lines(dom.PurchaseCard) {
+		if l == "English" || l == "Hindi" || l == "Hinglish" {
+			set("language", &d.Language, l)
+		}
+		if strings.HasPrefix(l, "Starts on ") && d.StartDate == nil {
+			d.StartDate = parseDate(strings.TrimPrefix(l, "Starts on "))
+			if d.StartDate != nil {
+				d.Provenance["startDate"] = "rendered_dom"
+			}
+		}
+		if strings.HasPrefix(l, "Ends on ") && d.EndDate == nil {
+			d.EndDate = parseDate(strings.TrimPrefix(l, "Ends on "))
+			if d.EndDate != nil {
+				d.Provenance["endDate"] = "rendered_dom"
+			}
+		}
+	}
+	if len(d.Subjects) == 0 {
+		for _, l := range lines(dom.About) {
+			if strings.HasPrefix(l, "Subjects:") {
+				s := strings.TrimSpace(strings.TrimPrefix(l, "Subjects:"))
+				s = strings.ReplaceAll(s, " and ", ",")
+				for _, part := range strings.Split(s, ",") {
+					if part = strings.TrimSpace(part); part != "" {
+						d.Subjects = append(d.Subjects, part)
+					}
+				}
+				d.Provenance["subjects"] = "rendered_dom"
+			}
+		}
+	}
+	if len(d.Faculty) == 0 {
+		for _, card := range dom.Teachers {
+			ls := lines(card)
+			if len(ls) >= 2 && ls[0] != "" {
+				d.Faculty = append(d.Faculty, course.Faculty{Name: ls[0], Subject: ls[1]})
+			}
+		}
+		if len(d.Faculty) > 0 {
+			d.Provenance["faculty"] = "rendered_dom"
+		}
+	}
+	if len(d.Features) == 0 {
+		ls := lines(dom.BasePlan)
+		active := false
+		for _, l := range ls {
+			if l == "Batch" {
+				active = true
+				continue
+			}
+			if active {
+				if l == "Select" || l == "Infinity" {
+					break
+				}
+				if !strings.HasPrefix(l, "₹") {
+					d.Features = append(d.Features, l)
+				}
+			}
+		}
+		if len(d.Features) > 0 {
+			d.Provenance["features"] = "rendered_dom"
+		}
+	}
+}

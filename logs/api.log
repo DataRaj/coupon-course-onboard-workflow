@@ -1,2 +1,0 @@
-{"time":"2026-09-28T11:48:39.166704138+05:30","level":"INFO","msg":"api listening","addr":":8080","env":"development"}
-{"time":"2026-09-28T11:48:39.167294807+05:30","level":"ERROR","msg":"api exited","error":"listen tcp :8080: bind: address already in use"}

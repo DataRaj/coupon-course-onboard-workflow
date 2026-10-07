@@ -61,13 +61,15 @@ func (s *Store) Get(ctx context.Context, userID uuid.UUID) (Account, error) {
 // lockAccount serialises concurrent claims for the same user, creating the mocked
 // account on first touch.
 func lockAccount(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (Account, error) {
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO wallet_accounts (user_id, available_coins, reserved_coins)
+		VALUES ($1, 0, 0) ON CONFLICT (user_id) DO NOTHING`, userID); err != nil {
+		return Account{}, err
+	}
 	a := Account{UserID: userID}
 	err := tx.QueryRow(ctx,
 		`SELECT available_coins, reserved_coins FROM wallet_accounts WHERE user_id = $1 FOR UPDATE`,
 		userID).Scan(&a.Available, &a.Reserved)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return a, nil
-	}
 	return a, err
 }
 
@@ -131,12 +133,11 @@ func apply(ctx context.Context, tx pgx.Tx, userID, redemptionID uuid.UUID, entry
 	if amount <= 0 {
 		return errors.New("wallet: amount must be positive")
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO wallet_accounts (user_id, available_coins, reserved_coins)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id) DO UPDATE SET
+	if _, err := tx.Exec(ctx, `UPDATE wallet_accounts SET
 			available_coins = wallet_accounts.available_coins + $2,
 			reserved_coins  = wallet_accounts.reserved_coins  + $3,
-			updated_at = now()`,
+			updated_at = now()
+		WHERE user_id = $1`,
 		userID, availableDelta, reservedDelta); err != nil {
 		return err
 	}

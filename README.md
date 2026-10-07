@@ -45,3 +45,11 @@ Configure the Pabbly webhook to point at
 Payment, Payment Failure and Payment Refund.
 # coupon-course-onboard-workflow
 # coupon-course-onboard-workflow
+
+## Physics Wallah public catalog slice
+
+The manual worker operation `go run ./cmd/worker ingest-pw-batch` ingests one
+configured public PW IIT-JEE Class 12 batch into the existing course API. It
+requires `DATABASE_URL` and an installed Playwright Chromium driver; no Pabbly
+credentials are needed for this operation. Target configuration is documented
+in `.env.example`.

@@ -67,7 +67,7 @@ func run(log *slog.Logger, discountBps int32, coinCost, coins int64) error {
 
 		tag, err := tx.Exec(ctx, `INSERT INTO offers (id, course_id, discount_bps, coin_cost)
 			SELECT gen_random_uuid(), c.id, $1, $2 FROM courses c
-			WHERE c.provider_active
+			WHERE c.provider_active AND c.provider = 'PABBLY'
 			  AND NOT EXISTS (SELECT 1 FROM offers o WHERE o.course_id = c.id AND o.status = 'ACTIVE')`,
 			discountBps, coinCost)
 		if err != nil {

@@ -97,7 +97,7 @@ func (c *Client) GetCheckout(ctx context.Context, ref provider.CourseRef, coupon
 }
 
 func matchesPlan(page object, planID string) bool {
-	if page.str("plan_id", "planId") == planID {
+	if id := page.str("id", "_id", "plan_id", "planId"); id == planID {
 		return true
 	}
 	if list, ok := page["plans_array"].([]any); ok {

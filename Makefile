@@ -97,6 +97,16 @@ dev: db-up ## Start Postgres, then run api + worker together (Ctrl-C stops both)
 
 ## --- Logs / audit ------------------------------------------------------------
 
+.PHONY: ingest-pw-batch
+ingest-pw-batch: ## Run ingest-pw-batch worker task with .env loaded
+	@if [ -f "$(ENV_FILE)" ]; then \
+		echo "--> Loading environment from $(ENV_FILE)"; \
+		set -a; . ./$(ENV_FILE); set +a; \
+	else \
+		echo "--> Warning: $(ENV_FILE) not found, using system environment"; \
+	fi; \
+	$(GO) run ./cmd/worker ingest-pw-batch $(ARGS)
+
 .PHONY: logs-api
 logs-api: ## Tail the API's JSON logs
 	@tail -f $(LOG_DIR)/api.log
