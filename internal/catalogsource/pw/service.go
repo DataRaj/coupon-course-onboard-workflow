@@ -2,103 +2,137 @@ package pw
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"hash/fnv"
 	"log/slog"
 	"time"
 
-	"course-coupon/internal/catalogsource"
 	"course-coupon/internal/config"
-	"course-coupon/internal/course"
-	"course-coupon/internal/database"
 	"github.com/google/uuid"
 )
 
-// Acquirer allows offline failure/fixture testing without a browser.
-type Acquirer interface {
-	Acquire(context.Context, uuid.UUID) (PWBatchDTO, error)
+type Source interface {
+	Discover(context.Context, uuid.UUID) ([]Target, error)
+	Acquire(context.Context, uuid.UUID, Target) (PWBatchDTO, error)
 }
+
+type BatchScrapeResult struct {
+	Target    Target           `json:"target"`
+	Batch     *NormalizedBatch `json:"batch,omitempty"`
+	Warnings  []string         `json:"warnings,omitempty"`
+	ErrorCode string           `json:"error_code,omitempty"`
+	Error     string           `json:"error,omitempty"`
+}
+
+type BulkScrapeResult struct {
+	RunID            uuid.UUID           `json:"run_id"`
+	ListingURL       string              `json:"listing_url"`
+	ExtractorVersion string              `json:"extractor_version"`
+	ErrorCode        string              `json:"error_code,omitempty"`
+	Error            string              `json:"error,omitempty"`
+	StartedAt        time.Time           `json:"started_at"`
+	FinishedAt       time.Time           `json:"finished_at"`
+	Discovered       int                 `json:"discovered"`
+	Succeeded        int                 `json:"succeeded"`
+	Failed           int                 `json:"failed"`
+	WithThumbnail    int                 `json:"with_thumbnail"`
+	WithPrice        int                 `json:"with_price"`
+	WithPlans        int                 `json:"with_plans"`
+	WarningCount     int                 `json:"warning_count"`
+	Items            []BatchScrapeResult `json:"items"`
+}
+
 type Service struct {
-	Store  *catalogsource.Store
-	Source Acquirer
+	Source Source
 	Config config.PWConfig
 	Log    *slog.Logger
 }
 
-var ErrIncomplete = errors.New("PW commercial observation incomplete; last-known-good projection preserved")
-
-func (s *Service) IngestTargetBatch(ctx context.Context) (id uuid.UUID, err error) {
-	slug, canonical, err := targetIdentity(s.Config.BatchURL)
+// Scrape discovers targets once and processes them sequentially. Per-target
+// failures are returned in the report and do not stop later targets.
+func (s *Service) Scrape(ctx context.Context) (BulkScrapeResult, error) {
+	runID := uuid.New()
+	result := BulkScrapeResult{
+		RunID: runID, ListingURL: s.Config.ListingURL,
+		ExtractorVersion: s.Config.ExtractorVersion,
+		StartedAt:        time.Now().UTC(), Items: []BatchScrapeResult{},
+	}
+	targets, err := s.Source.Discover(ctx, runID)
 	if err != nil {
-		return id, err
+		result.FinishedAt = time.Now().UTC()
+		result.ErrorCode = errorCode(err)
+		result.Error = err.Error()
+		s.Log.ErrorContext(ctx, "PW discovery failed", "run_id", runID,
+			"listing_url", result.ListingURL, "error_code", result.ErrorCode,
+			"error", err, "duration_ms", result.FinishedAt.Sub(result.StartedAt).Milliseconds())
+		return result, err
 	}
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(Provider + ":" + slug))
-	locked, release, err := database.TryAdvisoryLock(ctx, s.Store.Pool, int64(h.Sum64()))
-	if err != nil {
-		return id, err
-	}
-	if !locked {
-		return id, failure("already_running", fmt.Errorf("target ingestion already holds PostgreSQL lock"))
-	}
-	defer release()
-	run, err := s.Store.Start(ctx, Provider, slug, canonical, s.Config.ExtractorVersion)
-	if err != nil {
-		return id, err
-	}
-	log := s.Log.With("provider", Provider, "source_url", canonical, "ingestion_run_id", run.ID, "extractor_version", s.Config.ExtractorVersion)
-	started := time.Now()
-	var d PWBatchDTO
-	var observation *course.CatalogObservation
-	var diagnostics catalogsource.Diagnostics
-	var changed bool
-	// Use a short independent context to record failures after caller cancellation.
-	defer func() {
-		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		if err != nil {
-			diagnostics.ErrorCode = errorCode(err)
-			diagnostics.Error = err.Error()
+	result.Discovered = len(targets)
+	discoveredSlugs := make(map[string]struct{}, len(targets))
+	for index, target := range targets {
+		discoveredSlugs[target.Slug] = struct{}{}
+		if err := ctx.Err(); err != nil {
+			result.FinishedAt = time.Now().UTC()
+			return result, failure("cancelled", err)
 		}
-		var persistErr error
-		id, changed, persistErr = s.Store.Finish(finishCtx, run, observation, diagnostics)
-		if persistErr != nil {
-			// The failed transaction left the run RUNNING; finalize it without projection.
-			fallbackID, _, recordErr := s.Store.Finish(finishCtx, run, nil, catalogsource.Diagnostics{ErrorCode: "persistence_failed", Error: "normalized projection transaction failed"})
-			if recordErr == nil {
-				id = fallbackID
+		item := BatchScrapeResult{Target: target}
+		itemStarted := time.Now()
+		s.Log.InfoContext(ctx, "PW batch scrape started", "run_id", runID,
+			"batch_index", index+1, "batch_total", len(targets), "slug", target.Slug,
+			"source_url", target.CanonicalURL)
+		dto, acquireErr := s.Source.Acquire(ctx, runID, target)
+		if acquireErr != nil {
+			item.ErrorCode = errorCode(acquireErr)
+			item.Error = acquireErr.Error()
+			result.Failed++
+			result.Items = append(result.Items, item)
+			s.Log.ErrorContext(ctx, "PW batch scrape failed", "run_id", runID,
+				"batch_index", index+1, "batch_total", len(targets), "slug", target.Slug,
+				"error_code", item.ErrorCode, "duration_ms", time.Since(itemStarted).Milliseconds())
+			continue
+		}
+		batch, warnings, normalizeErr := Normalize(dto)
+		item.Warnings = warnings
+		result.WarningCount += len(warnings)
+		if normalizeErr != nil {
+			item.ErrorCode = errorCode(normalizeErr)
+			item.Error = normalizeErr.Error()
+			result.Failed++
+		} else {
+			item.Batch = &batch
+			result.Succeeded++
+			if batch.Thumbnail != "" {
+				result.WithThumbnail++
 			}
-			err = errors.Join(err, persistErr, recordErr)
+			if batch.SellingPriceMinor != nil {
+				result.WithPrice++
+			}
+			if len(batch.Plans) > 0 {
+				result.WithPlans++
+			}
 		}
-		result := "SUCCEEDED"
-		if err != nil {
-			result = "FAILED"
-		} else if observation != nil && observation.SellingPrice == nil {
-			result = "INCOMPLETE"
-			err = ErrIncomplete
+		result.Items = append(result.Items, item)
+		s.Log.InfoContext(ctx, "PW batch scrape completed", "run_id", runID,
+			"batch_index", index+1, "batch_total", len(targets), "slug", target.Slug,
+			"result", map[bool]string{true: "failed", false: "success"}[normalizeErr != nil],
+			"thumbnail_extracted", batch.Thumbnail != "", "plans_extracted", len(batch.Plans),
+			"warnings", len(warnings), "duration_ms", time.Since(itemStarted).Milliseconds())
+	}
+	for slug := range s.Config.BatchSlugs {
+		if _, found := discoveredSlugs[slug]; found {
+			continue
 		}
-		log.Info("PW ingestion finished", "course_id", id, "external_id", d.ExternalID, "result", result, "error_code", diagnostics.ErrorCode, "duration_ms", time.Since(started).Milliseconds(), "changed", changed, "warnings", diagnostics.Warnings)
-	}()
-	d, err = s.Source.Acquire(ctx, run.ID)
-	diagnostics.Provenance = d.Provenance
-	diagnostics.Warnings = d.Warnings
-	if !d.AcquiredAt.IsZero() {
-		diagnostics.AcquiredAt = &d.AcquiredAt
+		result.Items = append(result.Items, BatchScrapeResult{
+			Target: Target{Slug: slug}, ErrorCode: "target_not_discovered",
+			Error: "configured slug was not present on the public listing",
+		})
+		result.Failed++
 	}
-	if err != nil {
-		return id, err
-	}
-	o, warnings, err := Normalize(d, s.Config.ExpectedTitle)
-	diagnostics.Warnings = warnings
-	if err != nil {
-		return id, err
-	}
-	if ctx.Err() != nil {
-		return id, failure("cancelled", ctx.Err())
-	}
-	observation = &o
-	// API representation is normalized; do not log raw browser payloads.
-	log.InfoContext(ctx, "PW validation complete", "commercial_complete", o.SellingPrice != nil, "title", o.Title, "class", o.Class, "currency", o.Currency, "selling_price_minor", o.SellingPrice, "fields_extracted", len(d.Provenance))
-	return id, nil
+	result.FinishedAt = time.Now().UTC()
+	s.Log.InfoContext(ctx, "PW bulk scrape finished",
+		"run_id", runID, "listing_url", result.ListingURL,
+		"discovered", result.Discovered, "succeeded", result.Succeeded,
+		"failed", result.Failed, "with_thumbnail", result.WithThumbnail,
+		"with_price", result.WithPrice, "with_plans", result.WithPlans,
+		"warning_count", result.WarningCount,
+		"duration_ms", result.FinishedAt.Sub(result.StartedAt).Milliseconds())
+	return result, nil
 }

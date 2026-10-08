@@ -46,10 +46,10 @@ Payment, Payment Failure and Payment Refund.
 # coupon-course-onboard-workflow
 # coupon-course-onboard-workflow
 
-## Physics Wallah public catalog slice
+## Physics Wallah public bulk scraper
 
-The manual worker operation `go run ./cmd/worker ingest-pw-batch` ingests one
-configured public PW IIT-JEE Class 12 batch into the existing course API. It
-requires `DATABASE_URL` and an installed Playwright Chromium driver; no Pabbly
-credentials are needed for this operation. Target configuration is documented
-in `.env.example`.
+The manual worker operation `go run ./cmd/worker scrape-pw-batches` discovers
+public batch detail pages from the configured PW listing and prints one JSON
+report containing successful extractions and per-page failures. It does not
+write marketplace data or require a database. Target configuration is listed in
+`.env.example`.

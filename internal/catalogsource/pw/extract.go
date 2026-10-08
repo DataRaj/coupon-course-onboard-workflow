@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
-
-	"course-coupon/internal/course"
 )
 
 const maxPayloadBytes = 4 << 20
@@ -22,6 +21,7 @@ type Payload struct {
 // DOMState contains only selected public semantic sections, never the whole page.
 type DOMState struct {
 	Title         string   `json:"title"`
+	Thumbnail     string   `json:"thumbnail"`
 	BasePlan      string   `json:"base_plan"`
 	PurchaseCard  string   `json:"purchase_card"`
 	OriginalPrice string   `json:"original_price"`
@@ -186,13 +186,22 @@ func Extract(canonical string, acquired time.Time, network []Payload, embedded [
 	if dom.Title != "" && d.Title != strings.TrimSpace(dom.Title) {
 		return d, failure("identity_mismatch", fmt.Errorf("structured and rendered batch titles differ"))
 	}
-	// Category/class from the validated canonical hierarchy, not title guessing.
+	// Category/class may be taken from a validated canonical hierarchy, never
+	// guessed from promotional title text.
 	if d.Class == nil {
-		v := int32(12)
-		d.Class = &v
-		d.Provenance["class"] = "canonical_path"
+		var class int32
+		switch {
+		case strings.Contains(canonical, "/class-11/"):
+			class = 11
+		case strings.Contains(canonical, "/class-12/"):
+			class = 12
+		}
+		if class != 0 {
+			d.Class = &class
+			d.Provenance["class"] = "canonical_path"
+		}
 	}
-	if d.TargetExam == "" {
+	if d.TargetExam == "" && strings.Contains(canonical, "/iit-jee/") {
 		d.TargetExam = "IIT-JEE"
 		d.Provenance["target_exam"] = "canonical_path"
 	}
@@ -241,11 +250,8 @@ func extractBatch(d *PWBatchDTO, b object, plans []any, source string) {
 	if text(b["status"]) == "Active" {
 		set("availability", &d.Availability, "available")
 	}
-	if image := obj(b["previewImage"]); image != nil {
-		base := text(image["baseUrl"])
-		if base == "https://static.pw.live/" {
-			set("thumbnail", &d.Thumbnail, base+text(image["key"]))
-		}
+	if image := publicStructuredImage(b["previewImage"]); image != "" {
+		set("thumbnail", &d.Thumbnail, image)
 	}
 	fee := obj(b["fee"])
 	// fee.total is the full base-plan selling amount, not iOS purchase pricing.
@@ -256,6 +262,12 @@ func extractBatch(d *PWBatchDTO, b object, plans []any, source string) {
 		}
 		if text(fee["currency"]) == "INR" {
 			set("currency", &d.Currency, "INR")
+		}
+		if original := text(fee["price"]); original != "" {
+			set("original_price", &d.OriginalPrice, original)
+		}
+		if discount := text(fee["discount"]); discount != "" {
+			set("discount", &d.Discount, discount)
 		}
 	}
 	for _, sub := range array(b["subjects"]) {
@@ -276,7 +288,7 @@ func extractBatch(d *PWBatchDTO, b object, plans []any, source string) {
 			}
 			name := strings.TrimSpace(text(t["firstName"]) + " " + text(t["lastName"]))
 			if name != "" {
-				d.Faculty = append(d.Faculty, course.Faculty{Name: name, Subject: subject})
+				d.Faculty = append(d.Faculty, Faculty{Name: name, Subject: subject})
 			}
 		}
 	}
@@ -288,16 +300,25 @@ func extractBatch(d *PWBatchDTO, b object, plans []any, source string) {
 	}
 	for _, plan := range plans {
 		p := obj(plan)
-		if text(p["title"]) != "Batch" {
+		name := text(p["title"])
+		if name == "" {
 			continue
 		}
+		entry := PWPlanDTO{Name: name, SellingPrice: text(p["total"]), OriginalPrice: text(p["price"])}
 		for _, item := range array(p["tableItems"]) {
 			i := obj(item)
 			enabled, _ := i["enabled"].(bool)
 			if enabled && text(i["item"]) != "" {
-				d.Features = append(d.Features, text(i["item"]))
+				entry.Features = append(entry.Features, text(i["item"]))
 			}
 		}
+		d.Plans = append(d.Plans, entry)
+		if name == "Batch" {
+			d.Features = append(d.Features, entry.Features...)
+		}
+	}
+	if len(d.Plans) > 0 {
+		d.Provenance["plans"] = source
 	}
 	if len(d.Features) > 0 {
 		d.Provenance["features"] = source
@@ -323,13 +344,37 @@ func basePrice(s string) string {
 	}
 	return ""
 }
+
+func domPlans(raw string) []PWPlanDTO {
+	var plans []PWPlanDTO
+	var current *PWPlanDTO
+	for _, line := range lines(raw) {
+		if line == "Batch" || line == "Infinity" {
+			plans = append(plans, PWPlanDTO{Name: line})
+			current = &plans[len(plans)-1]
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		if line == "Select" {
+			current = nil
+			continue
+		}
+		if current.SellingPrice == "" && strings.HasPrefix(line, "₹") {
+			if _, err := ParsePrice(line); err == nil {
+				current.SellingPrice = line
+			}
+			continue
+		}
+		current.Features = append(current.Features, line)
+	}
+	return plans
+}
+
 func applyDOM(d *PWBatchDTO, dom DOMState) {
 	if d.Description == "" && strings.TrimSpace(dom.About) != "" {
-		description := []rune(strings.TrimSpace(dom.About))
-		if len(description) > 1000 {
-			description = description[:1000]
-		}
-		d.Description = string(description)
+		d.Description = strings.TrimSpace(dom.About)
 		d.Provenance["description"] = "rendered_dom"
 	}
 
@@ -340,6 +385,9 @@ func applyDOM(d *PWBatchDTO, dom DOMState) {
 		}
 	}
 	set("title", &d.Title, strings.TrimSpace(dom.Title))
+	if d.Thumbnail == "" && publicImageURL(dom.Thumbnail) {
+		set("thumbnail", &d.Thumbnail, strings.TrimSpace(dom.Thumbnail))
+	}
 	display := basePrice(dom.BasePlan)
 	if display != "" {
 		if _, e := ParsePrice(display); e == nil {
@@ -368,6 +416,12 @@ func applyDOM(d *PWBatchDTO, dom DOMState) {
 	}
 	if dom.OriginalPrice != "" {
 		set("original_price", &d.OriginalPrice, dom.OriginalPrice)
+	}
+	if len(d.Plans) == 0 {
+		d.Plans = domPlans(dom.BasePlan)
+		if len(d.Plans) > 0 {
+			d.Provenance["plans"] = "rendered_dom"
+		}
 	}
 	for _, l := range lines(dom.PurchaseCard) {
 		if l == "English" || l == "Hindi" || l == "Hinglish" {
@@ -400,11 +454,31 @@ func applyDOM(d *PWBatchDTO, dom DOMState) {
 			}
 		}
 	}
+	if d.Schedule == "" {
+		about := lines(dom.About)
+		for index, line := range about {
+			if !strings.HasPrefix(line, "Schedule:") {
+				continue
+			}
+			d.Schedule = strings.TrimSpace(strings.TrimPrefix(line, "Schedule:"))
+			if d.Schedule == "" && index+1 < len(about) {
+				d.Schedule = about[index+1]
+			}
+			if d.Schedule != "" {
+				d.Provenance["schedule"] = "rendered_dom"
+			}
+			break
+		}
+	}
 	if len(d.Faculty) == 0 {
 		for _, card := range dom.Teachers {
 			ls := lines(card)
 			if len(ls) >= 2 && ls[0] != "" {
-				d.Faculty = append(d.Faculty, course.Faculty{Name: ls[0], Subject: ls[1]})
+				faculty := Faculty{Name: ls[0], Subject: ls[1]}
+				if len(ls) >= 3 {
+					faculty.Experience = ls[2]
+				}
+				d.Faculty = append(d.Faculty, faculty)
 			}
 		}
 		if len(d.Faculty) > 0 {
@@ -430,6 +504,128 @@ func applyDOM(d *PWBatchDTO, dom DOMState) {
 		}
 		if len(d.Features) > 0 {
 			d.Provenance["features"] = "rendered_dom"
+		}
+	}
+}
+
+func publicImageURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && u.Scheme == "https" && u.Hostname() == "static.pw.live" && u.User == nil
+}
+
+func publicStructuredImage(value any) string {
+	if direct := text(value); publicImageURL(direct) {
+		return direct
+	}
+	image := obj(value)
+	if image == nil {
+		return ""
+	}
+	base, key := strings.TrimRight(text(image["baseUrl"]), "/"), strings.TrimLeft(text(image["key"]), "/")
+	candidate := base + "/" + key
+	if base == "" || key == "" || !publicImageURL(candidate) {
+		return ""
+	}
+	return candidate
+}
+
+// DiscoverTargets extracts bounded public detail targets. Structured payloads
+// are considered before rendered links, while the final result is deduplicated
+// by canonical URL and remains in discovery order.
+func DiscoverTargets(listingURL string, payloads []Payload, embedded []string, flight string, hrefs []string, max int, selected map[string]struct{}) []Target {
+	seen := map[string]struct{}{}
+	result := make([]Target, 0, max)
+	add := func(raw, title string) {
+		if len(result) >= max {
+			return
+		}
+		canonical, err := canonicalTargetURL(listingURL, raw)
+		if err != nil {
+			return
+		}
+		slug, canonical, err := targetIdentity(canonical)
+		if err != nil {
+			return
+		}
+		if len(selected) > 0 {
+			if _, ok := selected[slug]; !ok {
+				return
+			}
+		}
+		if _, ok := seen[canonical]; ok {
+			return
+		}
+		seen[canonical] = struct{}{}
+		result = append(result, Target{Slug: slug, CanonicalURL: canonical, Title: strings.TrimSpace(title)})
+	}
+	for _, payload := range payloads {
+		if value, err := decodeJSON(payload.Body); err == nil {
+			walkCandidateData(value, 0, add)
+		}
+	}
+	for _, raw := range embedded {
+		if value, err := decodeJSON([]byte(raw)); err == nil {
+			walkCandidateData(value, 0, add)
+		}
+	}
+	for _, value := range flightObjects(flight) {
+		walkCandidateData(value, 0, add)
+	}
+	for _, href := range hrefs {
+		add(href, "")
+	}
+	return result
+}
+
+func canonicalTargetURL(listingURL, raw string) (string, error) {
+	base, err := url.Parse(listingURL)
+	if err != nil {
+		return "", err
+	}
+	raw = strings.TrimSpace(raw)
+	if raw != "" && !strings.Contains(raw, "/") {
+		raw = strings.TrimRight(listingURL, "/") + "/" + raw
+	}
+	reference, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	resolved := base.ResolveReference(reference)
+	resolved.RawQuery = ""
+	resolved.Fragment = ""
+	canonical := resolved.String()
+	catalogPrefix := strings.TrimSuffix(strings.TrimRight(base.Path, "/"), "/batches") + "/"
+	if !strings.HasPrefix(resolved.Path, catalogPrefix) {
+		return "", fmt.Errorf("target is outside configured listing")
+	}
+	_, canonical, err = targetIdentity(canonical)
+	return canonical, err
+}
+
+func walkCandidateData(value any, depth int, add func(string, string)) {
+	if depth > 24 {
+		return
+	}
+	switch current := value.(type) {
+	case map[string]any:
+		title := text(current["name"])
+		if title == "" {
+			title = text(current["title"])
+		}
+		for _, key := range []string{"url", "href", "link", "route"} {
+			if candidate := text(current[key]); strings.Contains(candidate, "/batches/") {
+				add(candidate, title)
+			}
+		}
+		if slug := text(current["slug"]); title != "" && text(current["_id"]) != "" && slug != "" && !strings.ContainsAny(slug, "/?#%") {
+			add(slug, title)
+		}
+		for _, child := range current {
+			walkCandidateData(child, depth+1, add)
+		}
+	case []any:
+		for _, child := range current {
+			walkCandidateData(child, depth+1, add)
 		}
 	}
 }

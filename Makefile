@@ -6,6 +6,8 @@ DB_CONTAINER ?= ccs-postgres
 DB_IMAGE     ?= postgres:16-alpine
 DB_PORT      ?= 5432
 LOG_DIR      ?= logs
+PW_SCRAPE_LOG ?= $(LOG_DIR)/pw-scrape.log
+PW_SCRAPE_OUTPUT ?= $(LOG_DIR)/pw-batches.json
 
 # Pull in .env if present so `make run-api` etc. pick up DATABASE_URL, PABBLY_*, ...
 ifneq (,$(wildcard $(ENV_FILE)))
@@ -97,15 +99,19 @@ dev: db-up ## Start Postgres, then run api + worker together (Ctrl-C stops both)
 
 ## --- Logs / audit ------------------------------------------------------------
 
-.PHONY: ingest-pw-batch
-ingest-pw-batch: ## Run ingest-pw-batch worker task with .env loaded
+.PHONY: scrape-pw-batches
+scrape-pw-batches: logs-dir ## Scrape PW batches; save logs and the latest JSON report under logs/
 	@if [ -f "$(ENV_FILE)" ]; then \
-		echo "--> Loading environment from $(ENV_FILE)"; \
+		echo "--> Loading environment from $(ENV_FILE)" >&2; \
 		set -a; . ./$(ENV_FILE); set +a; \
 	else \
-		echo "--> Warning: $(ENV_FILE) not found, using system environment"; \
+		echo "--> Warning: $(ENV_FILE) not found, using system environment" >&2; \
 	fi; \
-	$(GO) run ./cmd/worker ingest-pw-batch $(ARGS)
+	PW_LOG_FILE="$(PW_SCRAPE_LOG)" PW_OUTPUT_FILE="$(PW_SCRAPE_OUTPUT)" $(GO) run ./cmd/worker scrape-pw-batches $(ARGS)
+
+.PHONY: logs-pw
+logs-pw: ## Tail PW scraper logs
+	@tail -f $(PW_SCRAPE_LOG)
 
 .PHONY: logs-api
 logs-api: ## Tail the API's JSON logs

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -17,11 +16,10 @@ import (
 // View is the frontend representation. Amounts are decimal major units; provider
 // response blobs are never exposed.
 type View struct {
-	Catalog  *CatalogDetails `json:"catalog,omitempty"`
-	ID       uuid.UUID       `json:"id"`
-	Title    string          `json:"title"`
-	PlanName string          `json:"plan_name"`
-	Provider string          `json:"provider"`
+	ID       uuid.UUID `json:"id"`
+	Title    string    `json:"title"`
+	PlanName string    `json:"plan_name"`
+	Provider string    `json:"provider"`
 
 	Class       *int32 `json:"class,omitempty"`
 	Board       string `json:"board,omitempty"`
@@ -37,8 +35,6 @@ type View struct {
 }
 
 type PricingView struct {
-	ObservedAt   *time.Time   `json:"observed_at,omitempty"`
-	Status       string       `json:"status,omitempty"`
 	MRP          *json.Number `json:"mrp,omitempty"`
 	SellingPrice json.Number  `json:"selling_price"`
 	Currency     string       `json:"currency"`
@@ -52,12 +48,11 @@ type OfferView struct {
 
 func ToView(c Course, o *Offer) View {
 	v := View{
-		Catalog: c.Catalog, ID: c.ID, Title: c.Title, PlanName: c.PlanName, Provider: c.Provider,
+		ID: c.ID, Title: c.Title, PlanName: c.PlanName, Provider: c.Provider,
 		Class: c.Class, Board: c.Board, Subject: c.Subject, Language: c.Language,
 		TargetExam: c.TargetExam, Thumbnail: c.Thumbnail, Duration: c.Duration,
 		Description: c.Description,
 		Pricing: PricingView{
-			ObservedAt: c.CommercialObservedAt, Status: c.CommercialStatus,
 			SellingPrice: c.SellingPrice.Major(),
 			Currency:     c.Currency,
 		},

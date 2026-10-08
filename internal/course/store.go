@@ -2,7 +2,6 @@ package course
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,28 +24,20 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 const courseColumns = `id, provider, provider_product_id, provider_plan_id, title, plan_name,
 	description, class, board, subject, language, target_exam, thumbnail_url, duration,
 	mrp_amount, selling_price_amount, currency, checkout_url, provider_active,
-	last_synced_at, created_at, updated_at, catalog_details, commercial_observed_at, commercial_status`
+	last_synced_at, created_at, updated_at`
 
 func scanCourse(row pgx.Row) (Course, error) {
 	var c Course
-	var details []byte
-	var commercialStatus *string
 	var board, subject, language, targetExam, thumb, duration *string
 	var mrp *int64
 	var selling int64
 	err := row.Scan(&c.ID, &c.Provider, &c.ProviderProductID, &c.ProviderPlanID, &c.Title,
 		&c.PlanName, &c.Description, &c.Class, &board, &subject, &language, &targetExam,
 		&thumb, &duration, &mrp, &selling, &c.Currency, &c.CheckoutURL, &c.ProviderActive,
-		&c.LastSyncedAt, &c.CreatedAt, &c.UpdatedAt, &details, &c.CommercialObservedAt, &commercialStatus)
+		&c.LastSyncedAt, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return c, err
 	}
-	if len(details) > 0 {
-		if err := json.Unmarshal(details, &c.Catalog); err != nil {
-			return c, err
-		}
-	}
-	c.CommercialStatus = deref(commercialStatus)
 	c.Board, c.Subject, c.Language = deref(board), deref(subject), deref(language)
 	c.TargetExam, c.Thumbnail, c.Duration = deref(targetExam), deref(thumb), deref(duration)
 	c.SellingPrice = money.Minor(selling)

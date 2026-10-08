@@ -44,7 +44,7 @@ func TestExtractionSources(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			o, w, e := Normalize(d, "Lakshya JEE in English 2027")
+			o, w, e := Normalize(d)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -56,17 +56,17 @@ func TestExtractionSources(t *testing.T) {
 			if method == "rendered_dom" {
 				want = 389900
 			}
-			if o.SellingPrice == nil || int64(*o.SellingPrice) != want {
-				t.Fatalf("price=%v warnings=%v", o.SellingPrice, w)
+			if o.SellingPriceMinor == nil || int64(*o.SellingPriceMinor) != want {
+				t.Fatalf("price=%v warnings=%v", o.SellingPriceMinor, w)
 			}
 			if d.Provenance["selling_price"] != source {
 				t.Fatalf("provenance=%v", d.Provenance)
 			}
-			if o.MRP == nil || *o.MRP != 630000 || o.Language != "English" || len(o.Details.Subjects) != 3 || len(o.Details.Faculty) != 4 || len(o.Details.Features) != 7 {
+			if o.OriginalPriceMinor == nil || *o.OriginalPriceMinor != 630000 || o.Language != "English" || len(o.Subjects) != 3 || len(o.Faculty) != 4 || len(o.Features) != 7 || o.Thumbnail == "" || len(o.Plans) == 0 {
 				t.Fatalf("bad normalized course: %+v", o)
 			}
-			if o.Details.Faculty[0].Subject != "Physics" || o.Details.StartDate == nil || o.Details.EndDate == nil {
-				t.Fatalf("missing relationships/dates: %+v", o.Details)
+			if o.Faculty[0].Subject != "Physics" || o.StartDate == nil || o.EndDate == nil {
+				t.Fatalf("missing relationships/dates: %+v", o)
 			}
 		})
 	}
@@ -106,14 +106,14 @@ func TestIncompleteAndChangedPage(t *testing.T) {
 			if e != nil {
 				return
 			}
-			o, _, e := Normalize(d, "")
+			o, _, e := Normalize(d)
 			if e != nil {
 				t.Fatal(e)
 			}
-			if (o.SellingPrice != nil) != tc.wantPrice {
-				t.Fatalf("price=%v", o.SellingPrice)
+			if (o.SellingPriceMinor != nil) != tc.wantPrice {
+				t.Fatalf("price=%v", o.SellingPriceMinor)
 			}
-			if o.MRP != nil {
+			if o.OriginalPriceMinor != nil {
 				t.Fatal("invented MRP")
 			}
 		})
@@ -126,17 +126,17 @@ func TestConflictingPricesAndSEO(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	o, _, e := Normalize(d, "")
-	if e != nil || o.SellingPrice != nil {
-		t.Fatalf("conflicting price accepted: %v %v", o.SellingPrice, e)
+	o, _, e := Normalize(d)
+	if e != nil || o.SellingPriceMinor != nil {
+		t.Fatalf("conflicting price accepted: %v %v", o.SellingPriceMinor, e)
 	}
 	seo := `{"@type":"Product","name":"Lakshya JEE in English 2027","offers":{"price":5200,"priceCurrency":"INR"}}`
 	d, e = Extract(fixtureURL, time.Now(), nil, []string{seo}, "", DOMState{Title: "Lakshya JEE in English 2027"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	o, _, _ = Normalize(d, "")
-	if o.SellingPrice != nil {
+	o, _, _ = Normalize(d)
+	if o.SellingPriceMinor != nil {
 		t.Fatal("SEO offer treated as current price")
 	}
 }
@@ -145,25 +145,55 @@ func TestIdentityAndCommercialValidation(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, _, e = Normalize(d, "different title"); e == nil {
-		t.Fatal("expected title mismatch")
-	}
 	for _, mutate := range []func(*PWBatchDTO){func(d *PWBatchDTO) { d.Currency = "XYZ" }, func(d *PWBatchDTO) { d.SellingPriceContext = "emi" }, func(d *PWBatchDTO) { d.SellingPrice = "broken" }, func(d *PWBatchDTO) { d.Provenance = map[string]string{} }} {
 		copy := d
 		mutate(&copy)
-		o, _, e := Normalize(copy, "")
-		if e != nil || o.SellingPrice != nil {
+		o, _, e := Normalize(copy)
+		if e != nil || o.SellingPriceMinor != nil {
 			t.Fatalf("commercial guard failed: %v", e)
 		}
 	}
 	d.Slug = "wrong"
-	if _, _, e = Normalize(d, ""); e == nil {
+	if _, _, e = Normalize(d); e == nil {
 		t.Fatal("expected identity mismatch")
 	}
-	for _, u := range []string{"http://www.pw.live/iit-jee/class-12/batches/x", "https://evil.test/iit-jee/class-12/batches/x", "https://www.pw.live/neet/class-12/batches/x", fixtureURL + "?token=x"} {
+	for _, u := range []string{"http://www.pw.live/iit-jee/class-12/batches/x", "https://evil.test/iit-jee/class-12/batches/x", "https://www.pw.live/study-v2/batches/x", fixtureURL + "?token=x", fixtureURL + "/nested"} {
 		if _, _, e := targetIdentity(u); e == nil {
 			t.Errorf("accepted URL %s", u)
 		}
+	}
+}
+
+func TestDiscoverTargets(t *testing.T) {
+	listing := "https://www.pw.live/iit-jee/class-12/batches"
+	payload := Payload{Body: []byte(`{"data":[{"_id":"1","slug":"alpha","name":"Alpha"},{"href":"/iit-jee/class-12/batches/beta","title":"Beta"}]}`)}
+	targets := DiscoverTargets(listing, []Payload{payload}, nil, "", []string{
+		"/iit-jee/class-12/batches/alpha",
+		"https://evil.test/iit-jee/class-12/batches/evil",
+	}, 10, nil)
+	if len(targets) != 2 || targets[0].Slug != "alpha" || targets[1].Slug != "beta" {
+		t.Fatalf("unexpected targets: %+v", targets)
+	}
+	selected := map[string]struct{}{"beta": {}}
+	targets = DiscoverTargets(listing, []Payload{payload}, nil, "", nil, 10, selected)
+	if len(targets) != 1 || targets[0].Slug != "beta" {
+		t.Fatalf("slug filter failed: %+v", targets)
+	}
+	broad := "https://www.pw.live/iit-jee/batches"
+	targets = DiscoverTargets(broad, nil, nil, "", []string{"/iit-jee/class-11/batches/arjuna-jee-2027-123456"}, 10, nil)
+	if len(targets) != 1 || targets[0].Slug != "arjuna-jee-2027-123456" {
+		t.Fatalf("broad catalog target failed: %+v", targets)
+	}
+	listings := childListingURLs(broad, []string{
+		"/iit-jee/class-11/batches", "/iit-jee/class-12/batches/one", "/neet/class-11/batches",
+		"https://evil.test/iit-jee/class-12/batches", "/iit-jee/dropper/batches",
+	})
+	if len(listings) != 2 || listings[0] != "https://www.pw.live/iit-jee/class-11/batches" || listings[1] != "https://www.pw.live/iit-jee/dropper/batches" {
+		t.Fatalf("child listing discovery failed: %+v", listings)
+	}
+	listings = appendMissingURLs(listings, publicIITJEEListings(broad))
+	if len(listings) != 3 || listings[2] != "https://www.pw.live/iit-jee/class-12/batches" {
+		t.Fatalf("missing public category fallback: %+v", listings)
 	}
 }
 func TestDatesAndMalformedStructuredData(t *testing.T) {
