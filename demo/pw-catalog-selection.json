@@ -1,0 +1,289 @@
+{
+  "kind": "proposed_pw_demo_selection",
+  "source_run_id": "9872e0ea-5753-45c3-add3-ff807371d30b",
+  "source_report": "logs/pw-batches.json",
+  "demo_campaign": {
+    "discount_bps": 1500,
+    "coins_per_rupee": 4,
+    "coin_rounding": "CEILING",
+    "maximum_discount_minor": null,
+    "fulfillment_mode": "DEMO"
+  },
+  "offerings": [
+    {
+      "batch_external_id": "6779345c20fa0756e4a7fd08",
+      "plan_external_id": "696a4200a735dd8b9e4dfaa4",
+      "slug": "lakshya-jee-2027-181537",
+      "title": "Lakshya JEE 2027",
+      "class": 12,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/class-12/batches/lakshya-jee-2027-181537",
+      "selling_price_minor": 249920,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 37488,
+        "coin_cost": 1500,
+        "expected_amount_minor": 212432
+      }
+    },
+    {
+      "batch_external_id": "6994351acb3c3eb967dd60ee",
+      "plan_external_id": "6a0e9f47c3d812ffd00dfe56",
+      "slug": "lakshya-jee-2-0-2027-804341",
+      "title": "Lakshya JEE 2.0 2027",
+      "class": 12,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/class-12/batches/lakshya-jee-2-0-2027-804341",
+      "selling_price_minor": 249920,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 37488,
+        "coin_cost": 1500,
+        "expected_amount_minor": 212432
+      }
+    },
+    {
+      "batch_external_id": "6994351a00ac8b885c6d88b2",
+      "plan_external_id": "6a4df8fcaf2b7eb69c933bb6",
+      "slug": "lakshya-jee-3-0-2027-219519",
+      "title": "Lakshya JEE 3.0 2027",
+      "class": 12,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/class-12/batches/lakshya-jee-3-0-2027-219519",
+      "selling_price_minor": 249920,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 37488,
+        "coin_cost": 1500,
+        "expected_amount_minor": 212432
+      }
+    },
+    {
+      "batch_external_id": "6a86cab0a06c46001b1bd7ac",
+      "plan_external_id": "6a883fa2a561f4a615a026e9",
+      "slug": "jee-360--class-11th--437748",
+      "title": "JEE 360 (Class 11th)",
+      "class": 11,
+      "plan_name": "Infinity Pro",
+      "canonical_url": "https://www.pw.live/iit-jee/batches/jee-360--class-11th--437748",
+      "selling_price_minor": 299900,
+      "currency": "INR",
+      "warnings": [],
+      "example_quote": {
+        "discount_minor": 44985,
+        "coin_cost": 1800,
+        "expected_amount_minor": 254915
+      }
+    },
+    {
+      "batch_external_id": "69919d482aae2c4e365acc7e",
+      "plan_external_id": "6a96b4cc5a7f03f3e192cf93",
+      "slug": "arjuna-jee-4-0-2027-663773",
+      "title": "Arjuna JEE 4.0 2027",
+      "class": 11,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/batches/arjuna-jee-4-0-2027-663773",
+      "selling_price_minor": 319900,
+      "currency": "INR",
+      "warnings": [],
+      "example_quote": {
+        "discount_minor": 47985,
+        "coin_cost": 1920,
+        "expected_amount_minor": 271915
+      }
+    },
+    {
+      "batch_external_id": "698ad3519549b300a5e1cc6a",
+      "plan_external_id": "699ade91aba78ac5e2e80a45",
+      "slug": "arjuna-jee-2027-243495",
+      "title": "Arjuna JEE 2027",
+      "class": 11,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/class-11/batches/arjuna-jee-2027-243495",
+      "selling_price_minor": 319920,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 47988,
+        "coin_cost": 1920,
+        "expected_amount_minor": 271932
+      }
+    },
+    {
+      "batch_external_id": "69919d4755afdfb898bb08d8",
+      "plan_external_id": "6a02dae0ed423824a74c3f88",
+      "slug": "arjuna-jee-2-0-2027-627501",
+      "title": "Arjuna JEE 2.0 2027",
+      "class": 11,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/class-11/batches/arjuna-jee-2-0-2027-627501",
+      "selling_price_minor": 319920,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 47988,
+        "coin_cost": 1920,
+        "expected_amount_minor": 271932
+      }
+    },
+    {
+      "batch_external_id": "698adab0c1c6f98cdb4b82df",
+      "plan_external_id": "699b15dc56bdb5ac25a33027",
+      "slug": "arjuna-jee-hindi-2027-507954",
+      "title": "Arjuna JEE Hindi 2027",
+      "class": 11,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/class-11/batches/arjuna-jee-hindi-2027-507954",
+      "selling_price_minor": 349900,
+      "currency": "INR",
+      "warnings": [],
+      "example_quote": {
+        "discount_minor": 52485,
+        "coin_cost": 2100,
+        "expected_amount_minor": 297415
+      }
+    },
+    {
+      "batch_external_id": "6aa790b23e605f161edbf979",
+      "plan_external_id": "6aa92b260080571d0990d48b",
+      "slug": "mission-100-jee-2027-225226",
+      "title": "MISSION 100 JEE 2027",
+      "class": 12,
+      "plan_name": "Infinity Pro",
+      "canonical_url": "https://www.pw.live/iit-jee/class-12/batches/mission-100-jee-2027-225226",
+      "selling_price_minor": 349900,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 52485,
+        "coin_cost": 2100,
+        "expected_amount_minor": 297415
+      }
+    },
+    {
+      "batch_external_id": "698c5ef3c40c1930b3147183",
+      "plan_external_id": "698f20e5f1d28907a3ad3cc3",
+      "slug": "lakshya-jee-in-english-2027-348091",
+      "title": "Lakshya JEE in English 2027",
+      "class": 12,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/class-12/batches/lakshya-jee-in-english-2027-348091",
+      "selling_price_minor": 389920,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 58488,
+        "coin_cost": 2340,
+        "expected_amount_minor": 331432
+      }
+    },
+    {
+      "batch_external_id": "697e094b69fd1d09ab561c2c",
+      "plan_external_id": "698078464610dc8830f14570",
+      "slug": "lakshya-jee-2027---parishram-2027-619489",
+      "title": "LAKSHYA JEE 2027 + PARISHRAM 2027",
+      "class": 12,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/class-12/batches/lakshya-jee-2027---parishram-2027-619489",
+      "selling_price_minor": 450020,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 67503,
+        "coin_cost": 2701,
+        "expected_amount_minor": 382517
+      }
+    },
+    {
+      "batch_external_id": "6a881950467f3624cb5c47f6",
+      "plan_external_id": "6a89395cde5ef04251f20e84",
+      "slug": "jee-360--class-11th----lakshya-jee-2028-292788",
+      "title": "JEE 360 (Class 11th) + Lakshya JEE 2028",
+      "class": 11,
+      "plan_name": "Batch",
+      "canonical_url": "https://www.pw.live/iit-jee/batches/jee-360--class-11th----lakshya-jee-2028-292788",
+      "selling_price_minor": 520000,
+      "currency": "INR",
+      "warnings": [],
+      "example_quote": {
+        "discount_minor": 78000,
+        "coin_cost": 3120,
+        "expected_amount_minor": 442000
+      }
+    },
+    {
+      "batch_external_id": "698ad3519549b300a5e1cc6a",
+      "plan_external_id": "699ade9085933c051d5004a3",
+      "slug": "arjuna-jee-2027-243495",
+      "title": "Arjuna JEE 2027",
+      "class": 11,
+      "plan_name": "Infinity Pro",
+      "canonical_url": "https://www.pw.live/iit-jee/class-11/batches/arjuna-jee-2027-243495",
+      "selling_price_minor": 799900,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 119985,
+        "coin_cost": 4800,
+        "expected_amount_minor": 679915
+      }
+    },
+    {
+      "batch_external_id": "698adab0c1c6f98cdb4b82df",
+      "plan_external_id": "699b15dc22c9691541e573bd",
+      "slug": "arjuna-jee-hindi-2027-507954",
+      "title": "Arjuna JEE Hindi 2027",
+      "class": 11,
+      "plan_name": "Infinity Pro",
+      "canonical_url": "https://www.pw.live/iit-jee/class-11/batches/arjuna-jee-hindi-2027-507954",
+      "selling_price_minor": 1149900,
+      "currency": "INR",
+      "warnings": [],
+      "example_quote": {
+        "discount_minor": 172485,
+        "coin_cost": 6900,
+        "expected_amount_minor": 977415
+      }
+    },
+    {
+      "batch_external_id": "697e094b69fd1d09ab561c2c",
+      "plan_external_id": "698078477f8d41fd03470a22",
+      "slug": "lakshya-jee-2027---parishram-2027-619489",
+      "title": "LAKSHYA JEE 2027 + PARISHRAM 2027",
+      "class": 12,
+      "plan_name": "Infinity Pro",
+      "canonical_url": "https://www.pw.live/iit-jee/class-12/batches/lakshya-jee-2027---parishram-2027-619489",
+      "selling_price_minor": 1499900,
+      "currency": "INR",
+      "warnings": [
+        "selling_price_display_rounded: retaining structured paise"
+      ],
+      "example_quote": {
+        "discount_minor": 224985,
+        "coin_cost": 9000,
+        "expected_amount_minor": 1274915
+      }
+    }
+  ]
+}

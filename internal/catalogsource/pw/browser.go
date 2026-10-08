@@ -322,7 +322,7 @@ func (n *networkObserver) payloads() ([]Payload, []string, int, int) {
 			warnings = append(warnings, "network_body_too_large")
 			continue
 		}
-		payloads = append(payloads, Payload{Body: body, Source: "network_json"})
+		payloads = append(payloads, Payload{Body: body, Source: "network_json", URL: response.URL()})
 	}
 	return payloads, warnings, requests, discovered
 }
@@ -699,13 +699,16 @@ func (b *Browser) Acquire(parent context.Context, runID uuid.UUID, target Target
 	if flightErr != nil {
 		warnings = append(warnings, "embedded_flight_unavailable")
 	}
-	dto, err = Extract(finalURL, nowUTC(), payloads, embedded, flight, dom)
+	var capture RawCapture
+	dto, capture, err = extractWithRaw(finalURL, nowUTC(), payloads, embedded, flight, dom)
+	dto.RawCapture = capture
 	dto.Warnings = append(dto.Warnings, readinessWarnings...)
 	dto.Warnings = append(dto.Warnings, warnings...)
 	b.log.InfoContext(lease.ctx, "PW extraction complete",
 		"run_id", runID, "source_url", finalURL, "relevant_requests", requests,
 		"json_responses_discovered", discovered, "candidate_bodies_read", len(payloads),
 		"network_payload_used", hasSource(dto, "network_json"), "dom_used", hasSource(dto, "rendered_dom"),
+		"selected_raw_source", capture.SelectedSource, "matched_raw_sources", len(capture.Sources),
 		"fields_extracted", len(dto.Provenance), "thumbnail_extracted", dto.Thumbnail != "",
 		"rate_limited_responses", rateLimits, "server_error_responses", serverErrors,
 		"console_errors", lease.consoleErrors.Load(), "warnings", dto.Warnings)

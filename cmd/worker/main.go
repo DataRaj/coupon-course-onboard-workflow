@@ -141,6 +141,34 @@ func runPWBatches(log *slog.Logger) error {
 	service := pw.Service{Source: browser, Config: pwcfg, Log: log}
 	result, scrapeErr := service.Scrape(ctx)
 	closeErr := browser.Close()
+	var rawSaveErr error
+	rawPath := strings.TrimSpace(os.Getenv("PW_RAW_OUTPUT_FILE"))
+	if rawPath == "" {
+		if outputPath := strings.TrimSpace(os.Getenv("PW_OUTPUT_FILE")); outputPath != "" {
+			rawPath = strings.TrimSuffix(outputPath, ".json") + "-raw.json"
+		}
+	}
+	if rawPath != "" {
+		rawPath = strings.TrimSuffix(rawPath, ".json") + "-" + result.RunID.String() + ".json"
+		rawReport := struct {
+			RunID            string              `json:"run_id"`
+			ExtractorVersion string              `json:"extractor_version"`
+			Observations     []pw.RawObservation `json:"observations"`
+		}{result.RunID.String(), result.ExtractorVersion, result.RawObservations}
+		var rawJSON []byte
+		rawJSON, rawSaveErr = json.MarshalIndent(rawReport, "", "  ")
+		if rawSaveErr == nil {
+			rawJSON = append(rawJSON, '\n')
+			if mkdirErr := os.MkdirAll(filepath.Dir(rawPath), 0o755); mkdirErr != nil {
+				rawSaveErr = fmt.Errorf("create PW raw output directory: %w", mkdirErr)
+			} else if writeErr := os.WriteFile(rawPath, rawJSON, 0o600); writeErr != nil {
+				rawSaveErr = fmt.Errorf("save PW raw observations: %w", writeErr)
+			} else {
+				result.RawReportFile = rawPath
+				log.Info("PW raw observations saved", "output_file", rawPath, "observations", len(result.RawObservations))
+			}
+		}
+	}
 	report, encodeErr := json.MarshalIndent(result, "", "  ")
 	if encodeErr == nil {
 		report = append(report, '\n')
@@ -159,5 +187,5 @@ func runPWBatches(log *slog.Logger) error {
 			log.Info("PW JSON report saved", "output_file", path, "items", len(result.Items))
 		}
 	}
-	return errors.Join(scrapeErr, closeErr, encodeErr, saveErr)
+	return errors.Join(scrapeErr, closeErr, rawSaveErr, encodeErr, saveErr)
 }

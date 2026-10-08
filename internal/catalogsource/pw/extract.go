@@ -2,6 +2,7 @@ package pw
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ const maxPayloadBytes = 4 << 20
 type Payload struct {
 	Body   []byte
 	Source string
+	URL    string
 }
 
 // DOMState contains only selected public semantic sections, never the whole page.
@@ -27,6 +29,23 @@ type DOMState struct {
 	OriginalPrice string   `json:"original_price"`
 	About         string   `json:"about"`
 	Teachers      []string `json:"teachers"`
+}
+
+// RawCapture keeps the public batch-shaped input used during extraction. It is
+// written to a separate local report, never included in the normalized report.
+type RawCapture struct {
+	SelectedSource string           `json:"selected_source,omitempty"`
+	Sources        []SourceSnapshot `json:"sources"`
+	RenderedDOM    DOMState         `json:"rendered_dom"`
+}
+
+type SourceSnapshot struct {
+	Source    string `json:"source"`
+	SourceURL string `json:"source_url,omitempty"`
+	Index     int    `json:"index"`
+	Selected  bool   `json:"selected"`
+	Batch     any    `json:"batch"`
+	Plans     any    `json:"plans,omitempty"`
 }
 
 type object map[string]any
@@ -139,52 +158,80 @@ func findBatch(v any, slug string, depth int) (object, []any) {
 }
 
 func Extract(canonical string, acquired time.Time, network []Payload, embedded []string, flight string, dom DOMState) (PWBatchDTO, error) {
+	d, _, err := extractWithRaw(canonical, acquired, network, embedded, flight, dom)
+	return d, err
+}
+
+func extractWithRaw(canonical string, acquired time.Time, network []Payload, embedded []string, flight string, dom DOMState) (PWBatchDTO, RawCapture, error) {
+	raw := RawCapture{Sources: []SourceSnapshot{}, RenderedDOM: dom}
 	slug, canonical, err := targetIdentity(canonical)
 	if err != nil {
-		return PWBatchDTO{}, err
+		return PWBatchDTO{}, raw, err
 	}
 	d := PWBatchDTO{Provider: Provider, Slug: slug, CanonicalURL: canonical, AcquiredAt: acquired, Provenance: map[string]string{}, Availability: "unknown"}
 	var batch object
 	var plans []any
 	source := ""
-	for _, p := range network {
-		if v, e := decodeJSON(p.Body); e == nil {
-			batch, plans = findBatch(v, slug, 0)
-			if batch != nil {
-				source = "network_json"
-				break
-			}
+	seenSnapshots := map[string]struct{}{}
+	collect := func(kind, sourceURL string, index int, candidate object, candidatePlans []any) {
+		if candidate == nil {
+			return
 		}
-	}
-	if batch == nil {
-		for _, raw := range embedded {
-			if v, e := decodeJSON([]byte(raw)); e == nil {
-				batch, plans = findBatch(v, slug, 0)
-				if batch != nil {
-					source = "embedded_state"
-					break
-				}
-			}
+		safeBatch, safePlans := safeCatalogValue(candidate), safeCatalogValue(candidatePlans)
+		encoded, err := json.Marshal([]any{safeBatch, safePlans})
+		if err != nil {
+			return
 		}
-	}
-	if batch == nil {
-		for _, v := range flightObjects(flight) {
-			batch, plans = findBatch(v, slug, 0)
-			if batch != nil {
+		digest := sha256.Sum256(encoded)
+		fingerprint := fmt.Sprintf("%s:%x", kind, digest)
+		if _, duplicate := seenSnapshots[fingerprint]; duplicate {
+			return
+		}
+		seenSnapshots[fingerprint] = struct{}{}
+		selected := batch == nil
+		raw.Sources = append(raw.Sources, SourceSnapshot{
+			Source: kind, SourceURL: catalogSourceURL(sourceURL), Index: index, Selected: selected,
+			Batch: safeBatch, Plans: safePlans,
+		})
+		if selected {
+			batch, plans = candidate, candidatePlans
+			raw.SelectedSource = kind
+			switch kind {
+			case "json_script", "react_flight":
 				source = "embedded_state"
-				break
+			default:
+				source = kind
 			}
 		}
+	}
+	for index, p := range network {
+		if v, e := decodeJSON(p.Body); e == nil {
+			candidate, candidatePlans := findBatch(v, slug, 0)
+			collect("network_json", p.URL, index, candidate, candidatePlans)
+		}
+	}
+	for index, script := range embedded {
+		if v, e := decodeJSON([]byte(script)); e == nil {
+			candidate, candidatePlans := findBatch(v, slug, 0)
+			collect("json_script", "", index, candidate, candidatePlans)
+		}
+	}
+	for index, v := range flightObjects(flight) {
+		candidate, candidatePlans := findBatch(v, slug, 0)
+		collect("react_flight", "", index, candidate, candidatePlans)
 	}
 	if batch != nil {
 		extractBatch(&d, batch, plans, source)
 	}
 	applyDOM(&d, dom)
+	if raw.SelectedSource == "" && d.Provenance["title"] == "rendered_dom" {
+		raw.SelectedSource = "rendered_dom"
+	}
 	if d.Title == "" {
-		return d, failure("identity_missing", fmt.Errorf("batch title not found in structured or rendered state"))
+		return d, raw, failure("identity_missing", fmt.Errorf("batch title not found in structured or rendered state"))
 	}
 	if dom.Title != "" && d.Title != strings.TrimSpace(dom.Title) {
-		return d, failure("identity_mismatch", fmt.Errorf("structured and rendered batch titles differ"))
+		return d, raw, failure("identity_mismatch", fmt.Errorf("structured and rendered batch titles differ"))
 	}
 	// Category/class may be taken from a validated canonical hierarchy, never
 	// guessed from promotional title text.
@@ -205,7 +252,7 @@ func Extract(canonical string, acquired time.Time, network []Payload, embedded [
 		d.TargetExam = "IIT-JEE"
 		d.Provenance["target_exam"] = "canonical_path"
 	}
-	return d, nil
+	return d, raw, nil
 }
 
 func extractBatch(d *PWBatchDTO, b object, plans []any, source string) {

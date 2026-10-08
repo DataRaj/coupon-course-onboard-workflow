@@ -15,11 +15,24 @@ type Source interface {
 }
 
 type BatchScrapeResult struct {
-	Target    Target           `json:"target"`
-	Batch     *NormalizedBatch `json:"batch,omitempty"`
-	Warnings  []string         `json:"warnings,omitempty"`
-	ErrorCode string           `json:"error_code,omitempty"`
-	Error     string           `json:"error,omitempty"`
+	ObservationID uuid.UUID        `json:"observation_id"`
+	Target        Target           `json:"target"`
+	Batch         *NormalizedBatch `json:"batch,omitempty"`
+	Warnings      []string         `json:"warnings,omitempty"`
+	ErrorCode     string           `json:"error_code,omitempty"`
+	Error         string           `json:"error,omitempty"`
+}
+
+// RawObservation is a local diagnostic record linked to one normalized item.
+// It contains only matched public batch objects and selected rendered fields.
+type RawObservation struct {
+	ObservationID uuid.UUID  `json:"observation_id"`
+	Slug          string     `json:"slug"`
+	SourceURL     string     `json:"source_url,omitempty"`
+	AcquiredAt    *time.Time `json:"acquired_at,omitempty"`
+	Capture       RawCapture `json:"capture"`
+	Warnings      []string   `json:"warnings,omitempty"`
+	ErrorCode     string     `json:"error_code,omitempty"`
 }
 
 type BulkScrapeResult struct {
@@ -37,7 +50,9 @@ type BulkScrapeResult struct {
 	WithPrice        int                 `json:"with_price"`
 	WithPlans        int                 `json:"with_plans"`
 	WarningCount     int                 `json:"warning_count"`
+	RawReportFile    string              `json:"raw_report_file,omitempty"`
 	Items            []BatchScrapeResult `json:"items"`
+	RawObservations  []RawObservation    `json:"-"`
 }
 
 type Service struct {
@@ -73,28 +88,41 @@ func (s *Service) Scrape(ctx context.Context) (BulkScrapeResult, error) {
 			result.FinishedAt = time.Now().UTC()
 			return result, failure("cancelled", err)
 		}
-		item := BatchScrapeResult{Target: target}
+		item := BatchScrapeResult{ObservationID: uuid.New(), Target: target}
 		itemStarted := time.Now()
-		s.Log.InfoContext(ctx, "PW batch scrape started", "run_id", runID,
+		s.Log.InfoContext(ctx, "PW batch scrape started", "run_id", runID, "observation_id", item.ObservationID,
 			"batch_index", index+1, "batch_total", len(targets), "slug", target.Slug,
 			"source_url", target.CanonicalURL)
 		dto, acquireErr := s.Source.Acquire(ctx, runID, target)
+		observation := RawObservation{
+			ObservationID: item.ObservationID, Slug: target.Slug,
+			SourceURL: target.CanonicalURL,
+			Capture:   dto.RawCapture, Warnings: dto.Warnings,
+		}
+		if !dto.AcquiredAt.IsZero() {
+			observation.AcquiredAt = &dto.AcquiredAt
+		}
 		if acquireErr != nil {
 			item.ErrorCode = errorCode(acquireErr)
 			item.Error = acquireErr.Error()
+			item.Warnings = dto.Warnings
+			observation.ErrorCode = item.ErrorCode
+			result.RawObservations = append(result.RawObservations, observation)
 			result.Failed++
 			result.Items = append(result.Items, item)
-			s.Log.ErrorContext(ctx, "PW batch scrape failed", "run_id", runID,
+			s.Log.ErrorContext(ctx, "PW batch scrape failed", "run_id", runID, "observation_id", item.ObservationID,
 				"batch_index", index+1, "batch_total", len(targets), "slug", target.Slug,
 				"error_code", item.ErrorCode, "duration_ms", time.Since(itemStarted).Milliseconds())
 			continue
 		}
 		batch, warnings, normalizeErr := Normalize(dto)
 		item.Warnings = warnings
+		observation.Warnings = warnings
 		result.WarningCount += len(warnings)
 		if normalizeErr != nil {
 			item.ErrorCode = errorCode(normalizeErr)
 			item.Error = normalizeErr.Error()
+			observation.ErrorCode = item.ErrorCode
 			result.Failed++
 		} else {
 			item.Batch = &batch
@@ -109,8 +137,9 @@ func (s *Service) Scrape(ctx context.Context) (BulkScrapeResult, error) {
 				result.WithPlans++
 			}
 		}
+		result.RawObservations = append(result.RawObservations, observation)
 		result.Items = append(result.Items, item)
-		s.Log.InfoContext(ctx, "PW batch scrape completed", "run_id", runID,
+		s.Log.InfoContext(ctx, "PW batch scrape completed", "run_id", runID, "observation_id", item.ObservationID,
 			"batch_index", index+1, "batch_total", len(targets), "slug", target.Slug,
 			"result", map[bool]string{true: "failed", false: "success"}[normalizeErr != nil],
 			"thumbnail_extracted", batch.Thumbnail != "", "plans_extracted", len(batch.Plans),
@@ -120,9 +149,14 @@ func (s *Service) Scrape(ctx context.Context) (BulkScrapeResult, error) {
 		if _, found := discoveredSlugs[slug]; found {
 			continue
 		}
+		observationID := uuid.New()
 		result.Items = append(result.Items, BatchScrapeResult{
-			Target: Target{Slug: slug}, ErrorCode: "target_not_discovered",
+			ObservationID: observationID, Target: Target{Slug: slug}, ErrorCode: "target_not_discovered",
 			Error: "configured slug was not present on the public listing",
+		})
+		result.RawObservations = append(result.RawObservations, RawObservation{
+			ObservationID: observationID, Slug: slug,
+			ErrorCode: "target_not_discovered",
 		})
 		result.Failed++
 	}

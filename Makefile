@@ -8,6 +8,7 @@ DB_PORT      ?= 5432
 LOG_DIR      ?= logs
 PW_SCRAPE_LOG ?= $(LOG_DIR)/pw-scrape.log
 PW_SCRAPE_OUTPUT ?= $(LOG_DIR)/pw-batches.json
+PW_SCRAPE_RAW_OUTPUT ?= $(LOG_DIR)/pw-batches-raw.json
 
 # Pull in .env if present so `make run-api` etc. pick up DATABASE_URL, PABBLY_*, ...
 ifneq (,$(wildcard $(ENV_FILE)))
@@ -107,7 +108,7 @@ scrape-pw-batches: logs-dir ## Scrape PW batches; save logs and the latest JSON 
 	else \
 		echo "--> Warning: $(ENV_FILE) not found, using system environment" >&2; \
 	fi; \
-	PW_LOG_FILE="$(PW_SCRAPE_LOG)" PW_OUTPUT_FILE="$(PW_SCRAPE_OUTPUT)" $(GO) run ./cmd/worker scrape-pw-batches $(ARGS)
+	PW_LOG_FILE="$(PW_SCRAPE_LOG)" PW_OUTPUT_FILE="$(PW_SCRAPE_OUTPUT)" PW_RAW_OUTPUT_FILE="$(PW_SCRAPE_RAW_OUTPUT)" $(GO) run ./cmd/worker scrape-pw-batches $(ARGS)
 
 .PHONY: logs-pw
 logs-pw: ## Tail PW scraper logs

@@ -77,6 +77,7 @@ type PWBatchDTO struct {
 	AcquiredAt          time.Time         `json:"acquired_at"`
 	Warnings            []string          `json:"warnings,omitempty"`
 	Provenance          map[string]string `json:"provenance,omitempty"`
+	RawCapture          RawCapture        `json:"-"`
 }
 
 // NormalizedBatch is safe output for callers of the bulk scraper. Prices use
